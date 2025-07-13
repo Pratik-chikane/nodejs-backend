@@ -1,23 +1,15 @@
 import { NextFunction, Request, Response } from "express"
+import { ApiError, ErrorTypes } from "../core/ApiError";
+import { InternalError } from "../core/CustomError";
+import logger from "../core/logger";
 
-const errorHandler = (err: Error, req: Request, res: Response, next: NextFunction) => {
-  let statusCode = res.statusCode === 200 ? 500 : res.statusCode
-  let message = err.message
-  if (err.name === "CastError") {
-    message = "Resource Not Found"
-    statusCode = 404
+export const errorHandler = (err: Error, req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof ApiError) {
+    ApiError.handle(err, res);
+    const level = err.type === ErrorTypes.INTERNAL ? 'error' : 'warn';
+    logger[level](err.message, { url: req.originalUrl, method: req.method, ip: req.ip, stack: err.stack });
+    return;
   }
-  res.status(statusCode)
-  res.json({
-    message: message,
-    stack: process.env.NODE_ENV === "development" ? err.stack : null,
-  })
+  ApiError.handle(new InternalError(), res);
+  logger.error(err.message, { url: req.originalUrl, method: req.method, ip: req.ip, stack: err.stack });
 }
-
-const notFound = (req: Request, res: Response, next: NextFunction) => {
-  const error = new Error(`Not Found: ${req.originalUrl}`)
-  res.status(404)
-  next(error)
-}
-
-export { errorHandler, notFound }

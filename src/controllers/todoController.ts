@@ -1,74 +1,111 @@
-import asyncHandler from "express-async-handler"
-import Todo from "../models/todoModel"
-import { protectedRequest } from "../../types/app-request"
-import { Response } from "express"
+import asyncHandler from "express-async-handler";
+import Todo from "../models/todoModel";
+import { protectedRequest } from "../../types/app-request";
+import { Response } from "express";
+import logger from "../core/logger";
+import {
+  BadRequestError,
+  ForbiddenError,
+  InternalError,
+  NotFoundError,
+  UnauthorizedError,
+} from "../core/CustomError";
 
+const createTodo = asyncHandler(
+  async (req: protectedRequest, res: Response) => {
+    const { title, description } = req.body;
+    const userId = req.user
 
-const createTodo = asyncHandler(async (req: protectedRequest, res: Response) => {
-  const { title, description } = req.body
-  console.log(req.user)
+    if (!title || !description) {
+      throw new BadRequestError("Title and Description are required!");
+    }
 
-  if (!title || !description) {
-    res.status(400)
-    throw new Error("Title and Description are required")
+    try {
+      const todo = await Todo.create({ user: req.user, title, description });
+      logger.info("Todo created successfully", {
+        userId,
+        todoId: todo._id,
+        title,
+      });
+
+      res.status(201).json({ title, description });
+    } catch (error) {
+      throw new InternalError("Failed to create todo");
+    }
   }
-
-  await Todo.create({ user: req.user, title, description })
-
-  res.status(201).json({ title, description })
-})
+);
 
 const getTodos = asyncHandler(async (req: protectedRequest, res: Response) => {
-  const user = req.user
-  const todos = await Todo.find({
-    user: user,
-  })
-  res.json(todos)
-})
+  const userId = req.user._id;
+  try {
+    const todos = await Todo.find({ user: userId });
+    logger.info("Todos fetched successfully", {
+      userId,
+      count: todos.length,
+    });
+
+    res.json(todos);
+  } catch (error) {
+    throw new InternalError("Failed to fetch todos.");
+  }
+});
 
 const editTodo = asyncHandler(async (req: protectedRequest, res: Response) => {
-  const { title, description, status } = req.body
+  const { title, description, status } = req.body;
+  const userId = req.user._id;
+  const todoId = req.params.id;
 
-  const user = req.user
+  if (!title || !description || !status)
+    throw new BadRequestError("Title, Description, and Status are required");
 
-  if (!title || !description || !status) {
-    res.status(400)
-    throw new Error("Title, Description, and Status are required")
+  try {
+    const todo = await Todo.findById(todoId);
+
+    if (!todo) throw new NotFoundError("Todo not found");
+
+    if (todo.user.toString() !== userId.toString())
+      throw new ForbiddenError("Not authorized to update this todo");
+
+    todo.title = title;
+    todo.description = description;
+    todo.status = status;
+
+    const updatedTodo = await todo.save();
+    logger.info("Todo updated successfully", {
+      userId,
+      todoId
+    });
+
+    res.json(updatedTodo);
+  } catch (error) {
+    throw new InternalError("Failed to update todo");
   }
+});
 
-  const todo = await Todo.findById(req.params.id)
+const deleteTodo = asyncHandler(
+  async (req: protectedRequest, res: Response) => {
+    const userId = req.user._id;
+    const todoId = req.params.id;
 
-  console.log(todo?.user.toString() !== user._id.toString())
+    try {
+      const todo = await Todo.findById(todoId);
+      if (!todo) throw new NotFoundError("Todo not found");
 
-  if (todo?.user.toString() !== user._id.toString()) {
-    res.status(401)
-    throw new Error("Not authorized to update this todo")
+      // Add authorization check for delete
+      if (todo.user.toString() !== userId.toString())
+        throw new UnauthorizedError("Not authorized to delete this todo");
+
+      await todo.deleteOne();
+
+      logger.info("Todo deleted successfully", {
+        userId,
+        todoId,
+      });
+      res.json({ message: "Todo deleted successfully" });
+    } catch (error) {
+      throw new InternalError("Failed to delete todo");
+    }
   }
+);
 
-  if (!todo) {
-    res.status(404)
-    throw new Error("Todo not found")
-  }
-
-  todo.title = title
-  todo.description = description
-  todo.status = status
-
-  const updatedTodo = await todo.save()
-
-  res.json(updatedTodo)
-})
-
-const deleteTodo = asyncHandler(async (req: protectedRequest, res: Response) => {
-  const todo = await Todo.findById(req.params.id)
-
-  if (todo) {
-    await todo.deleteOne()
-    res.json({ message: "Todo removed" })
-  } else {
-    res.status(404)
-    throw new Error("Todo not found")
-  }
-})
-
-export { createTodo, getTodos, editTodo, deleteTodo }
+export { createTodo, getTodos, editTodo, deleteTodo };
